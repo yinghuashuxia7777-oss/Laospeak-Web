@@ -1,0 +1,19 @@
+{
+  "name": "Miw LaoSpeak",
+  "short_name": "Miw",
+  "description": "Private Lao and Chinese translation for daily communication.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#050711",
+  "theme_color": "#070913",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "./assets/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#070913">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Miw">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Miw LaoSpeak</title>
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="icon" href="./assets/icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="./assets/icon.svg">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="hero">
+        <div class="brand-mark" aria-hidden="true">
+          <img src="./assets/icon.svg" alt="">
+        </div>
+        <div>
+          <p class="eyebrow">Miw LaoSpeak</p>
+          <h1>Daily translation, kept clear.</h1>
+        </div>
+        <button class="icon-button" id="settingsToggle" type="button" aria-label="Settings">
+          <span aria-hidden="true">...</span>
+        </button>
+      </header>
+
+      <section class="setup-panel" id="setupPanel" hidden>
+        <label>
+          Worker URL
+          <input id="workerUrlInput" type="url" placeholder="https://your-worker.workers.dev" autocomplete="off">
+        </label>
+        <label>
+          Access Code
+          <input id="accessCodeInput" type="password" placeholder="Family access code" autocomplete="off">
+        </label>
+        <button class="secondary-button" id="saveConfigButton" type="button">Save Settings</button>
+        <p class="setup-note">The OpenAI API key belongs in Cloudflare Worker secrets, never in this page.</p>
+      </section>
+
+      <nav class="mode-switcher" aria-label="Translation mode">
+        <button class="mode-button" data-mode="speech-to-text" type="button">Speech</button>
+        <button class="mode-button is-active" data-mode="lao-to-chinese" type="button">Lao -> CN</button>
+        <button class="mode-button" data-mode="chinese-to-lao" type="button">CN -> Lao</button>
+      </nav>
+
+      <section class="status-card">
+        <div>
+          <p class="status-label" id="modeTitle">Lao to Chinese</p>
+          <p class="status-text" id="statusText">Ready</p>
+        </div>
+        <div class="timer" id="timerText">00:00</div>
+      </section>
+
+      <section class="record-stage" id="voiceStage">
+        <div class="wave-ring" id="waveRing" aria-hidden="true">
+          <span></span><span></span><span></span><span></span><span></span>
+        </div>
+        <button class="record-button" id="recordButton" type="button">
+          <span class="record-dot"></span>
+          <strong id="recordButtonText">Start Recording</strong>
+        </button>
+      </section>
+
+      <section class="text-stage" id="textStage" hidden>
+        <label class="text-input-label" for="chineseTextInput">Chinese message</label>
+        <textarea id="chineseTextInput" rows="5" placeholder="Paste or type Chinese text here."></textarea>
+        <button class="primary-button" id="translateTextButton" type="button">Translate to Lao</button>
+      </section>
+
+      <section class="warning-bar" id="warningBar" hidden></section>
+      <section class="error-bar" id="errorBar" hidden></section>
+
+      <section class="results" aria-live="polite">
+        <article class="result-card" id="transcriptCard" hidden>
+          <span>Lao Transcript</span>
+          <p id="transcriptText"></p>
+        </article>
+        <article class="result-card" id="translationCard" hidden>
+          <span>Chinese Translation</span>
+          <p id="translationText"></p>
+        </article>
+        <article class="result-card primary-result" id="polishedCard" hidden>
+          <span>Polished Chinese</span>
+          <p id="polishedText"></p>
+        </article>
+        <article class="result-card primary-result" id="laoCard" hidden>
+          <span>Lao Translation</span>
+          <p id="laoText"></p>
+        </article>
+      </section>
+
+      <section class="history-panel" id="historyPanel">
+        <div class="section-heading">
+          <span>Recent</span>
+          <button id="clearHistoryButton" type="button">Clear History</button>
+        </div>
+        <div class="history-list" id="historyList"></div>
+      </section>
+
+      <footer class="action-bar">
+        <button class="secondary-button" id="clearButton" type="button">Clear</button>
+        <button class="primary-button" id="copyButton" type="button">Copy Result</button>
+      </footer>
+    </main>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

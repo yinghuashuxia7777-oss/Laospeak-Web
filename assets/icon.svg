@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Miw LaoSpeak icon">
+  <defs>
+    <linearGradient id="bg" x1="70" y1="40" x2="440" y2="470" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#171c2e"/>
+      <stop offset="0.5" stop-color="#070913"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="118" y1="130" x2="395" y2="376" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff0b9"/>
+      <stop offset="0.52" stop-color="#e1c284"/>
+      <stop offset="1" stop-color="#8fe8de"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="9" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.88 0 0 0 0 0.76 0 0 0 0 0.52 0 0 0 0.42 0"/>
+      <feBlend in="SourceGraphic"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <path d="M105 148c0-32 26-58 58-58h186c32 0 58 26 58 58v119c0 32-26 58-58 58h-57l-61 70c-10 11-28 4-28-11v-59h-40c-32 0-58-26-58-58V148Z" fill="#0d1322" stroke="url(#gold)" stroke-width="10" filter="url(#glow)"/>
+  <path d="M151 285V171h31l42 64 42-64h31v114h-32v-61l-31 46h-20l-31-46v61h-32Zm177 0V171h34v114h-34Z" fill="url(#gold)"/>
+  <path d="M386 184c10 0 18 8 18 18v83h-30v-83c0-10 8-18 18-18h-6Z" fill="#55d5cc"/>
+  <path d="M143 346c42 30 81 45 120 45 40 0 78-15 117-45" fill="none" stroke="#55d5cc" stroke-width="12" stroke-linecap="round" opacity="0.85"/>
+</svg>
