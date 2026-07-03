@@ -7,7 +7,7 @@ import {
   selectCopyText,
   trimHistory,
   validateRuntimeConfig
-} from "./core.js";
+} from "./core.js?v=20260704-feedback";
 
 const MAX_RECORDING_SECONDS = 60;
 const HISTORY_DAYS = 3;
