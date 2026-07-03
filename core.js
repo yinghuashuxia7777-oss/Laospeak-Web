@@ -98,6 +98,26 @@ export function validateRuntimeConfig(config = {}) {
   };
 }
 
+export function resolveVoiceSubmission(config = {}) {
+  const validated = validateRuntimeConfig(config);
+
+  if (!validated.ok) {
+    return {
+      canUpload: false,
+      workerUrl: validated.workerUrl,
+      accessCode: validated.accessCode,
+      message: "Recording captured. Add the Worker URL and access code in Settings before transcription can run."
+    };
+  }
+
+  return {
+    canUpload: true,
+    workerUrl: validated.workerUrl,
+    accessCode: validated.accessCode,
+    message: ""
+  };
+}
+
 export function cleanText(value) {
   return typeof value === "string" ? value.trim() : "";
 }

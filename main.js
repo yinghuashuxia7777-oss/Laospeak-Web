@@ -3,6 +3,7 @@ import {
   buildStatusText,
   cleanText,
   resolveMode,
+  resolveVoiceSubmission,
   selectCopyText,
   trimHistory,
   validateRuntimeConfig
@@ -114,17 +115,18 @@ async function toggleRecording() {
 }
 
 async function startRecording() {
-  const config = getValidConfig();
-  if (!config) {
-    return;
-  }
-
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
     fail("This browser cannot record audio. Please use Safari on iPhone with HTTPS.");
     return;
   }
 
   try {
+    const submission = resolveVoiceSubmission(loadConfig());
+    if (!submission.canUpload) {
+      showError("");
+      showWarning("You can test recording now. Transcription will start after Worker settings are added.");
+    }
+
     state.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     const mimeType = preferredAudioMimeType();
     state.recorder = new MediaRecorder(state.stream, mimeType ? { mimeType } : undefined);
@@ -134,7 +136,7 @@ async function startRecording() {
         state.chunks.push(event.data);
       }
     });
-    state.recorder.addEventListener("stop", () => submitRecordedAudio(config));
+    state.recorder.addEventListener("stop", submitRecordedAudio);
     state.recorder.start();
     state.startedAt = Date.now();
     setWorkflow("recording");
@@ -158,13 +160,22 @@ function stopRecording() {
   state.autoStopTimer = null;
 }
 
-async function submitRecordedAudio(config) {
+async function submitRecordedAudio() {
   const mimeType = state.chunks[0]?.type || "audio/webm";
   const audio = new Blob(state.chunks, { type: mimeType });
   state.chunks = [];
 
   if (audio.size < 512) {
     fail("No clear audio was recorded. Please try again closer to the microphone.");
+    return;
+  }
+
+  const submission = resolveVoiceSubmission(loadConfig());
+  if (!submission.canUpload) {
+    elements.setupPanel.hidden = false;
+    setWorkflow("idle");
+    showError("");
+    showWarning(submission.message);
     return;
   }
 
@@ -180,7 +191,7 @@ async function submitRecordedAudio(config) {
     form.append("mode", state.mode);
     form.append("audio", audio, `laospeak.${fileExtensionForMimeType(mimeType)}`);
 
-    const data = await requestWorker(config, "/api/voice", {
+    const data = await requestWorker(submission, "/api/voice", {
       method: "POST",
       body: form
     });
