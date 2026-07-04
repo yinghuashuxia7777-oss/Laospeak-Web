@@ -1,5 +1,7 @@
 import {
+  APP_VERSION,
   MODES,
+  buildMicrophoneErrorMessage,
   buildStatusText,
   cleanText,
   formatRecordingElapsed,
@@ -8,7 +10,7 @@ import {
   selectCopyText,
   trimHistory,
   validateRuntimeConfig
-} from "./core.js?v=20260704-recorder";
+} from "./core.js?v=20260704-diagnostics";
 
 const MAX_RECORDING_SECONDS = 60;
 const HISTORY_DAYS = 3;
@@ -21,7 +23,9 @@ const elements = {
   setupPanel: document.querySelector("#setupPanel"),
   workerUrlInput: document.querySelector("#workerUrlInput"),
   accessCodeInput: document.querySelector("#accessCodeInput"),
+  versionBadge: document.querySelector("#versionBadge"),
   saveConfigButton: document.querySelector("#saveConfigButton"),
+  resetCacheButton: document.querySelector("#resetCacheButton"),
   modeButtons: [...document.querySelectorAll(".mode-button")],
   modeTitle: document.querySelector("#modeTitle"),
   statusText: document.querySelector("#statusText"),
@@ -68,6 +72,7 @@ function init() {
   const config = loadConfig();
   elements.workerUrlInput.value = config.workerUrl;
   elements.accessCodeInput.value = config.accessCode;
+  elements.versionBadge.textContent = APP_VERSION;
   elements.setupPanel.hidden = Boolean(config.workerUrl && config.accessCode);
 
   elements.settingsToggle.addEventListener("click", () => {
@@ -82,6 +87,7 @@ function init() {
     showError("");
     elements.setupPanel.hidden = true;
   });
+  elements.resetCacheButton.addEventListener("click", resetAppCache);
 
   elements.modeButtons.forEach((button) => {
     button.addEventListener("click", () => setMode(button.dataset.mode));
@@ -139,10 +145,36 @@ async function startRecording() {
   } catch (error) {
     stopRecordingUI();
     stopTracks();
-    fail(error?.name === "NotAllowedError"
-      ? "Microphone permission was denied. Allow microphone access and try again."
-      : "Could not start the microphone. Please try again.");
+    fail(buildMicrophoneErrorMessage(error));
   }
+}
+
+async function resetAppCache() {
+  showError("");
+  showWarning("Refreshing Miw cache...");
+
+  try {
+    if ("serviceWorker" in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister()));
+    }
+
+    if ("caches" in window) {
+      const names = await caches.keys();
+      await Promise.all(
+        names
+          .filter((name) => name.startsWith("miw-laospeak"))
+          .map((name) => caches.delete(name))
+      );
+    }
+  } catch {
+    showWarning("Cache refresh was attempted. Reloading now.");
+  }
+
+  const refreshUrl = new URL(window.location.href);
+  refreshUrl.searchParams.set("v", APP_VERSION);
+  refreshUrl.searchParams.set("refresh", String(Date.now()));
+  window.location.replace(refreshUrl.toString());
 }
 
 function stopRecording() {

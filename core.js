@@ -1,3 +1,5 @@
+export const APP_VERSION = "20260704-diagnostics";
+
 export const MODES = Object.freeze({
   speechToText: Object.freeze({
     id: "speech-to-text",
@@ -124,6 +126,20 @@ export function formatRecordingElapsed(startedAt, now = Date.now(), maxSeconds =
   const minutes = String(Math.floor(cappedSeconds / 60)).padStart(2, "0");
   const seconds = String(cappedSeconds % 60).padStart(2, "0");
   return `${minutes}:${seconds}`;
+}
+
+export function buildMicrophoneErrorMessage(error) {
+  const errorName = cleanText(error?.name);
+
+  if (errorName === "NotAllowedError" || errorName === "PermissionDeniedError") {
+    return "Microphone permission was denied. Open this page in Safari, allow microphone access, and try again. (NotAllowedError)";
+  }
+
+  if (errorName === "NotFoundError" || errorName === "DevicesNotFoundError") {
+    return "No microphone was found. Check the iPhone microphone permission and try again.";
+  }
+
+  return `Could not start the microphone. Open this page in Safari over HTTPS and try again. Browser error: ${errorName || "UnknownError"}.`;
 }
 
 export function cleanText(value) {

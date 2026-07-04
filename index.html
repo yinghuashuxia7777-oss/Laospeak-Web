@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest">
     <link rel="icon" href="./assets/icon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="./assets/icon.svg">
-    <link rel="stylesheet" href="./styles.css?v=20260704-recorder">
+    <link rel="stylesheet" href="./styles.css?v=20260704-diagnostics">
   </head>
   <body>
     <main class="app-shell">
@@ -22,6 +22,7 @@
         <div>
           <p class="eyebrow">Miw LaoSpeak</p>
           <h1>Daily translation, kept clear.</h1>
+          <p class="build-label">Build <span id="versionBadge">loading</span></p>
         </div>
         <button class="icon-button" id="settingsToggle" type="button" aria-label="Settings">
           <span aria-hidden="true">...</span>
@@ -37,8 +38,11 @@
           Access Code
           <input id="accessCodeInput" type="password" placeholder="Family access code" autocomplete="off">
         </label>
-        <button class="secondary-button" id="saveConfigButton" type="button">Save Settings</button>
-        <p class="setup-note">The OpenAI API key belongs in Cloudflare Worker secrets, never in this page.</p>
+        <div class="settings-actions">
+          <button class="secondary-button" id="saveConfigButton" type="button">Save Settings</button>
+          <button class="secondary-button" id="resetCacheButton" type="button">Reset Cache</button>
+        </div>
+        <p class="setup-note">The OpenAI API key belongs in Cloudflare Worker secrets, never in this page. Use Reset Cache if the iPhone keeps showing an older build.</p>
       </section>
 
       <nav class="mode-switcher" aria-label="Translation mode">
@@ -107,6 +111,6 @@
       </footer>
     </main>
 
-    <script type="module" src="./main.js?v=20260704-recorder"></script>
+    <script type="module" src="./main.js?v=20260704-diagnostics"></script>
   </body>
 </html>

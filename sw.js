@@ -1,10 +1,10 @@
-const CACHE_NAME = "miw-laospeak-pwa-v3-recorder";
+const CACHE_NAME = "miw-laospeak-pwa-v4-diagnostics";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=20260704-recorder",
-  "./main.js?v=20260704-recorder",
-  "./core.js?v=20260704-recorder",
+  "./styles.css?v=20260704-diagnostics",
+  "./main.js?v=20260704-diagnostics",
+  "./core.js?v=20260704-diagnostics",
   "./manifest.webmanifest",
   "./assets/icon.svg"
 ];
@@ -26,6 +26,13 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const request = event.request;
   if (request.method !== "GET") {
+    return;
+  }
+
+  if (request.mode === "navigate") {
+    event.respondWith(
+      fetch(request).catch(() => caches.match("./index.html"))
+    );
     return;
   }
 

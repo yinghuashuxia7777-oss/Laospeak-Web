@@ -88,6 +88,13 @@ h1 {
   letter-spacing: 0;
 }
 
+.build-label {
+  margin: 6px 0 0;
+  color: var(--faint);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
 .icon-button,
 .mode-button,
 .primary-button,
@@ -172,6 +179,12 @@ textarea:focus {
   color: var(--faint);
   font-size: 0.78rem;
   line-height: 1.4;
+}
+
+.settings-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
 }
 
 .mode-switcher {
