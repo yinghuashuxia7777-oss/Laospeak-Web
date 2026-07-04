@@ -2,6 +2,7 @@ import {
   APP_VERSION,
   MODES,
   buildMicrophoneErrorMessage,
+  buildRecordingStatusText,
   buildStatusText,
   cleanText,
   formatRecordingElapsed,
@@ -10,7 +11,7 @@ import {
   selectCopyText,
   trimHistory,
   validateRuntimeConfig
-} from "./core.js?v=20260704-micflow";
+} from "./core.js?v=20260704-micstatus";
 
 const MAX_RECORDING_SECONDS = 60;
 const MICROPHONE_OPEN_TIMEOUT_MS = 8000;
@@ -60,7 +61,7 @@ const state = {
   stream: null,
   chunks: [],
   startedAt: 0,
-  timerFrame: null,
+  timerInterval: null,
   autoStopTimer: null,
   canPackageAudio: false,
   recordingToken: 0,
@@ -138,7 +139,7 @@ async function startRecording() {
   state.streamReady = false;
   state.chunks = [];
   state.canPackageAudio = false;
-  beginRecordingUI();
+  beginMicrophoneOpeningUI();
   showError("");
   showWarning("Opening microphone...");
 
@@ -152,9 +153,10 @@ async function startRecording() {
 
     state.stream = stream;
     state.streamReady = true;
+    beginActiveRecordingUI();
     showWarning(submission.canUpload
-      ? ""
-      : "You can test recording now. Transcription will start after Worker settings are added.");
+      ? "Microphone connected. Speak now."
+      : "Microphone connected. You can test recording now. Transcription will start after Worker settings are added.");
     startMediaRecorderIfAvailable();
     state.autoStopTimer = window.setTimeout(stopRecording, MAX_RECORDING_SECONDS * 1000);
   } catch (error) {
@@ -381,8 +383,12 @@ function fail(message) {
 function render() {
   const mode = resolveMode(state.mode);
   elements.modeTitle.textContent = mode.title;
-  elements.statusText.textContent = buildStatusText(state.workflow, mode.id);
-  elements.recordButtonText.textContent = state.workflow === "recording" ? "Stop Recording" : "Start Recording";
+  elements.statusText.textContent = state.workflow === "recording"
+    ? buildRecordingStatusText(state.streamReady)
+    : buildStatusText(state.workflow, mode.id);
+  elements.recordButtonText.textContent = state.workflow === "recording"
+    ? (state.streamReady ? "Stop Recording" : "Cancel")
+    : "Start Recording";
   elements.voiceStage.hidden = mode.id === MODES.chineseToLao.id;
   elements.textStage.hidden = mode.id !== MODES.chineseToLao.id;
   elements.shell.classList.toggle("is-recording", state.workflow === "recording");
@@ -457,27 +463,25 @@ function updateTimer() {
   elements.timerText.textContent = formatRecordingElapsed(state.startedAt, Date.now(), MAX_RECORDING_SECONDS);
 }
 
-function beginRecordingUI() {
+function beginMicrophoneOpeningUI() {
+  state.startedAt = 0;
+  setWorkflow("recording");
+  elements.timerText.textContent = "00:00";
+}
+
+function beginActiveRecordingUI() {
   state.startedAt = Date.now();
   setWorkflow("recording");
   updateTimer();
-  tickRecordingTimer();
-}
-
-function tickRecordingTimer() {
-  if (state.workflow !== "recording") {
-    return;
-  }
-
-  updateTimer();
-  state.timerFrame = window.requestAnimationFrame(tickRecordingTimer);
+  state.timerInterval = window.setInterval(updateTimer, 250);
 }
 
 function stopRecordingUI() {
-  if (state.timerFrame) {
-    window.cancelAnimationFrame(state.timerFrame);
+  if (state.timerInterval) {
+    window.clearInterval(state.timerInterval);
   }
-  state.timerFrame = null;
+  state.timerInterval = null;
+  state.startedAt = 0;
 }
 
 function startMediaRecorderIfAvailable() {

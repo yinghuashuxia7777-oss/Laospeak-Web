@@ -1,4 +1,4 @@
-export const APP_VERSION = "20260704-micflow";
+export const APP_VERSION = "20260704-micstatus";
 
 export const MODES = Object.freeze({
   speechToText: Object.freeze({
@@ -52,6 +52,10 @@ export function buildStatusText(state, mode) {
   }
 
   return STATE_LABELS[state] ?? STATE_LABELS.idle;
+}
+
+export function buildRecordingStatusText(isStreamReady) {
+  return isStreamReady ? STATE_LABELS.recording : "Opening microphone";
 }
 
 export function selectCopyText(mode, result = {}) {
