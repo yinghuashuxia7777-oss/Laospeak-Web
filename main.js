@@ -1,15 +1,20 @@
 import {
+  APP_VERSION,
   MODES,
+  buildMicrophoneErrorMessage,
+  buildRecordingStatusText,
   buildStatusText,
   cleanText,
+  formatRecordingElapsed,
   resolveMode,
   resolveVoiceSubmission,
   selectCopyText,
   trimHistory,
   validateRuntimeConfig
-} from "./core.js?v=20260704-feedback";
+} from "./core.js?v=20260704-micstatus";
 
 const MAX_RECORDING_SECONDS = 60;
+const MICROPHONE_OPEN_TIMEOUT_MS = 8000;
 const HISTORY_DAYS = 3;
 const CONFIG_KEY = "laospeak.web.config.v1";
 const HISTORY_KEY = "laospeak.web.history.v1";
@@ -20,7 +25,9 @@ const elements = {
   setupPanel: document.querySelector("#setupPanel"),
   workerUrlInput: document.querySelector("#workerUrlInput"),
   accessCodeInput: document.querySelector("#accessCodeInput"),
+  versionBadge: document.querySelector("#versionBadge"),
   saveConfigButton: document.querySelector("#saveConfigButton"),
+  resetCacheButton: document.querySelector("#resetCacheButton"),
   modeButtons: [...document.querySelectorAll(".mode-button")],
   modeTitle: document.querySelector("#modeTitle"),
   statusText: document.querySelector("#statusText"),
@@ -54,8 +61,11 @@ const state = {
   stream: null,
   chunks: [],
   startedAt: 0,
-  timer: null,
+  timerInterval: null,
   autoStopTimer: null,
+  canPackageAudio: false,
+  recordingToken: 0,
+  streamReady: false,
   currentResult: null,
   history: loadHistory()
 };
@@ -66,6 +76,7 @@ function init() {
   const config = loadConfig();
   elements.workerUrlInput.value = config.workerUrl;
   elements.accessCodeInput.value = config.accessCode;
+  elements.versionBadge.textContent = APP_VERSION;
   elements.setupPanel.hidden = Boolean(config.workerUrl && config.accessCode);
 
   elements.settingsToggle.addEventListener("click", () => {
@@ -80,6 +91,7 @@ function init() {
     showError("");
     elements.setupPanel.hidden = true;
   });
+  elements.resetCacheButton.addEventListener("click", resetAppCache);
 
   elements.modeButtons.forEach((button) => {
     button.addEventListener("click", () => setMode(button.dataset.mode));
@@ -115,48 +127,96 @@ async function toggleRecording() {
 }
 
 async function startRecording() {
-  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-    fail("This browser cannot record audio. Please use Safari on iPhone with HTTPS.");
+  if (!navigator.mediaDevices?.getUserMedia) {
+    fail("This browser cannot open the microphone. Please use Safari on iPhone with HTTPS.");
     return;
   }
 
+  const token = state.recordingToken + 1;
+  state.recordingToken = token;
+  state.recorder = null;
+  state.stream = null;
+  state.streamReady = false;
+  state.chunks = [];
+  state.canPackageAudio = false;
+  beginMicrophoneOpeningUI();
+  showError("");
+  showWarning("Opening microphone...");
+
   try {
     const submission = resolveVoiceSubmission(loadConfig());
-    if (!submission.canUpload) {
-      showError("");
-      showWarning("You can test recording now. Transcription will start after Worker settings are added.");
+    const stream = await requestMicrophoneStream();
+    if (token !== state.recordingToken || state.workflow !== "recording") {
+      stopStream(stream);
+      return;
     }
 
-    state.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const mimeType = preferredAudioMimeType();
-    state.recorder = new MediaRecorder(state.stream, mimeType ? { mimeType } : undefined);
-    state.chunks = [];
-    state.recorder.addEventListener("dataavailable", (event) => {
-      if (event.data.size > 0) {
-        state.chunks.push(event.data);
-      }
-    });
-    state.recorder.addEventListener("stop", submitRecordedAudio);
-    state.recorder.start();
-    state.startedAt = Date.now();
-    setWorkflow("recording");
-    state.timer = window.setInterval(updateTimer, 250);
+    state.stream = stream;
+    state.streamReady = true;
+    beginActiveRecordingUI();
+    showWarning(submission.canUpload
+      ? "Microphone connected. Speak now."
+      : "Microphone connected. You can test recording now. Transcription will start after Worker settings are added.");
+    startMediaRecorderIfAvailable();
     state.autoStopTimer = window.setTimeout(stopRecording, MAX_RECORDING_SECONDS * 1000);
   } catch (error) {
-    fail(error?.name === "NotAllowedError"
-      ? "Microphone permission was denied. Allow microphone access and try again."
-      : "Could not start the microphone. Please try again.");
+    if (token !== state.recordingToken) {
+      return;
+    }
+    stopRecordingUI();
+    stopTracks();
+    fail(buildMicrophoneErrorMessage(error));
   }
 }
 
+async function resetAppCache() {
+  showError("");
+  showWarning("Refreshing Miw cache...");
+
+  try {
+    if ("serviceWorker" in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister()));
+    }
+
+    if ("caches" in window) {
+      const names = await caches.keys();
+      await Promise.all(
+        names
+          .filter((name) => name.startsWith("miw-laospeak"))
+          .map((name) => caches.delete(name))
+      );
+    }
+  } catch {
+    showWarning("Cache refresh was attempted. Reloading now.");
+  }
+
+  const refreshUrl = new URL(window.location.href);
+  refreshUrl.searchParams.set("v", APP_VERSION);
+  refreshUrl.searchParams.set("refresh", String(Date.now()));
+  window.location.replace(refreshUrl.toString());
+}
+
 function stopRecording() {
+  state.recordingToken += 1;
+  if (!state.streamReady && !state.recorder) {
+    stopTracks();
+    stopRecordingUI();
+    window.clearTimeout(state.autoStopTimer);
+    state.autoStopTimer = null;
+    setWorkflow("idle");
+    showWarning("Microphone opening was cancelled.");
+    return;
+  }
+
   if (state.recorder && state.recorder.state !== "inactive") {
     state.recorder.stop();
+  } else {
+    submitRecordedAudio();
   }
   stopTracks();
-  window.clearInterval(state.timer);
+  stopRecordingUI();
   window.clearTimeout(state.autoStopTimer);
-  state.timer = null;
   state.autoStopTimer = null;
 }
 
@@ -165,7 +225,16 @@ async function submitRecordedAudio() {
   const audio = new Blob(state.chunks, { type: mimeType });
   state.chunks = [];
 
-  if (audio.size < 512) {
+  if (!state.canPackageAudio || audio.size < 512) {
+    const submission = resolveVoiceSubmission(loadConfig());
+    if (!submission.canUpload) {
+      elements.setupPanel.hidden = false;
+      setWorkflow("idle");
+      showError("");
+      showWarning("Microphone test finished. Add Worker settings before transcription can run.");
+      return;
+    }
+
     fail("No clear audio was recorded. Please try again closer to the microphone.");
     return;
   }
@@ -307,14 +376,19 @@ function setWorkflow(workflow) {
 
 function fail(message) {
   setWorkflow("failed");
+  showWarning("");
   showError(message);
 }
 
 function render() {
   const mode = resolveMode(state.mode);
   elements.modeTitle.textContent = mode.title;
-  elements.statusText.textContent = buildStatusText(state.workflow, mode.id);
-  elements.recordButtonText.textContent = state.workflow === "recording" ? "Stop Recording" : "Start Recording";
+  elements.statusText.textContent = state.workflow === "recording"
+    ? buildRecordingStatusText(state.streamReady)
+    : buildStatusText(state.workflow, mode.id);
+  elements.recordButtonText.textContent = state.workflow === "recording"
+    ? (state.streamReady ? "Stop Recording" : "Cancel")
+    : "Start Recording";
   elements.voiceStage.hidden = mode.id === MODES.chineseToLao.id;
   elements.textStage.hidden = mode.id !== MODES.chineseToLao.id;
   elements.shell.classList.toggle("is-recording", state.workflow === "recording");
@@ -386,15 +460,79 @@ function showWarning(message) {
 }
 
 function updateTimer() {
-  const elapsed = Math.min(MAX_RECORDING_SECONDS, Math.floor((Date.now() - state.startedAt) / 1000));
-  const minutes = String(Math.floor(elapsed / 60)).padStart(2, "0");
-  const seconds = String(elapsed % 60).padStart(2, "0");
-  elements.timerText.textContent = `${minutes}:${seconds}`;
+  elements.timerText.textContent = formatRecordingElapsed(state.startedAt, Date.now(), MAX_RECORDING_SECONDS);
+}
+
+function beginMicrophoneOpeningUI() {
+  state.startedAt = 0;
+  setWorkflow("recording");
+  elements.timerText.textContent = "00:00";
+}
+
+function beginActiveRecordingUI() {
+  state.startedAt = Date.now();
+  setWorkflow("recording");
+  updateTimer();
+  state.timerInterval = window.setInterval(updateTimer, 250);
+}
+
+function stopRecordingUI() {
+  if (state.timerInterval) {
+    window.clearInterval(state.timerInterval);
+  }
+  state.timerInterval = null;
+  state.startedAt = 0;
+}
+
+function startMediaRecorderIfAvailable() {
+  if (typeof MediaRecorder === "undefined") {
+    showWarning("Microphone is active. This iPhone browser cannot package audio until a compatible recorder is available.");
+    return;
+  }
+
+  try {
+    const mimeType = preferredAudioMimeType();
+    state.recorder = new MediaRecorder(state.stream, mimeType ? { mimeType } : undefined);
+    state.recorder.addEventListener("dataavailable", (event) => {
+      if (event.data.size > 0) {
+        state.chunks.push(event.data);
+      }
+    });
+    state.recorder.addEventListener("stop", submitRecordedAudio);
+    state.recorder.start();
+    state.canPackageAudio = true;
+  } catch {
+    state.recorder = null;
+    state.canPackageAudio = false;
+    showWarning("Microphone is active. Audio packaging failed on this browser, so this is recording-test mode for now.");
+  }
 }
 
 function stopTracks() {
-  state.stream?.getTracks().forEach((track) => track.stop());
+  stopStream(state.stream);
   state.stream = null;
+  state.streamReady = false;
+}
+
+function stopStream(stream) {
+  stream?.getTracks().forEach((track) => track.stop());
+}
+
+function requestMicrophoneStream() {
+  const request = navigator.mediaDevices.getUserMedia({ audio: true });
+  const timeout = new Promise((_, reject) => {
+    window.setTimeout(() => {
+      reject(Object.assign(new Error("Microphone request timed out."), { name: "TimeoutError" }));
+    }, MICROPHONE_OPEN_TIMEOUT_MS);
+  });
+
+  request.then((stream) => {
+    if (state.workflow !== "recording") {
+      stopStream(stream);
+    }
+  }).catch(() => {});
+
+  return Promise.race([request, timeout]);
 }
 
 function preferredAudioMimeType() {

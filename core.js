@@ -1,3 +1,5 @@
+export const APP_VERSION = "20260704-micstatus";
+
 export const MODES = Object.freeze({
   speechToText: Object.freeze({
     id: "speech-to-text",
@@ -50,6 +52,10 @@ export function buildStatusText(state, mode) {
   }
 
   return STATE_LABELS[state] ?? STATE_LABELS.idle;
+}
+
+export function buildRecordingStatusText(isStreamReady) {
+  return isStreamReady ? STATE_LABELS.recording : "Opening microphone";
 }
 
 export function selectCopyText(mode, result = {}) {
@@ -116,6 +122,32 @@ export function resolveVoiceSubmission(config = {}) {
     accessCode: validated.accessCode,
     message: ""
   };
+}
+
+export function formatRecordingElapsed(startedAt, now = Date.now(), maxSeconds = 60) {
+  const elapsedSeconds = Math.max(0, Math.floor((now - startedAt) / 1000));
+  const cappedSeconds = Math.min(maxSeconds, elapsedSeconds);
+  const minutes = String(Math.floor(cappedSeconds / 60)).padStart(2, "0");
+  const seconds = String(cappedSeconds % 60).padStart(2, "0");
+  return `${minutes}:${seconds}`;
+}
+
+export function buildMicrophoneErrorMessage(error) {
+  const errorName = cleanText(error?.name);
+
+  if (errorName === "NotAllowedError" || errorName === "PermissionDeniedError") {
+    return "Microphone permission was denied. Open this page in Safari, allow microphone access, and try again. (NotAllowedError)";
+  }
+
+  if (errorName === "NotFoundError" || errorName === "DevicesNotFoundError") {
+    return "No microphone was found. Check the iPhone microphone permission and try again.";
+  }
+
+  if (errorName === "TimeoutError") {
+    return "The microphone request timed out. Open the page in Safari, check microphone permission for this site, then try again. (TimeoutError)";
+  }
+
+  return `Could not start the microphone. Open this page in Safari over HTTPS and try again. Browser error: ${errorName || "UnknownError"}.`;
 }
 
 export function cleanText(value) {

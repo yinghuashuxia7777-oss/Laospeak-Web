@@ -1,10 +1,10 @@
-const CACHE_NAME = "miw-laospeak-pwa-v2-feedback";
+const CACHE_NAME = "miw-laospeak-pwa-v6-micstatus";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=20260704-feedback",
-  "./main.js?v=20260704-feedback",
-  "./core.js?v=20260704-feedback",
+  "./styles.css?v=20260704-micstatus",
+  "./main.js?v=20260704-micstatus",
+  "./core.js?v=20260704-micstatus",
   "./manifest.webmanifest",
   "./assets/icon.svg"
 ];
@@ -26,6 +26,13 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const request = event.request;
   if (request.method !== "GET") {
+    return;
+  }
+
+  if (request.mode === "navigate") {
+    event.respondWith(
+      fetch(request).catch(() => caches.match("./index.html"))
+    );
     return;
   }
 
