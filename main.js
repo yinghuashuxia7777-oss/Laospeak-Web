@@ -12,7 +12,7 @@ import {
   selectCopyText,
   trimHistory,
   validateRuntimeConfig
-} from "./core.js?v=20260704-micdebug";
+} from "./core.js?v=20260704-micgesture";
 
 const MAX_RECORDING_SECONDS = 60;
 const MICROPHONE_OPEN_TIMEOUT_MS = 8000;
@@ -135,12 +135,11 @@ async function toggleRecording() {
 
 async function startRecording() {
   if (!navigator.mediaDevices?.getUserMedia) {
-    await refreshMicrophoneDiagnostics("Unsupported browser");
+    refreshMicrophoneDiagnostics("Unsupported browser");
     fail("This browser cannot open the microphone. Please use Safari on iPhone with HTTPS.");
     return;
   }
 
-  await refreshMicrophoneDiagnostics("Start tapped");
   const token = state.recordingToken + 1;
   state.recordingToken = token;
   state.recorder = null;
@@ -152,11 +151,14 @@ async function startRecording() {
   beginMicrophoneOpeningUI();
   showError("");
   showWarning("Opening microphone...");
+  setBaseMicrophoneDiagnostics("Start tapped", "not checked before request");
   setMicDebugLine("Mic request", "Mic request: sent");
+  const streamRequest = requestMicrophoneStream();
+  refreshMicrophonePermissionLine();
 
   try {
     const submission = resolveVoiceSubmission(loadConfig());
-    const stream = await requestMicrophoneStream();
+    const stream = await streamRequest;
     if (token !== state.recordingToken || state.workflow !== "recording") {
       stopStream(stream);
       return;
@@ -473,8 +475,12 @@ function showWarning(message) {
   elements.warningBar.textContent = message;
 }
 
-async function refreshMicrophoneDiagnostics(stage) {
-  const permissionState = await readMicrophonePermissionState();
+function refreshMicrophoneDiagnostics(stage) {
+  setBaseMicrophoneDiagnostics(stage, "checking");
+  refreshMicrophonePermissionLine();
+}
+
+function setBaseMicrophoneDiagnostics(stage, permissionState) {
   state.micDebug = [
     `Build: ${APP_VERSION}`,
     `Stage: ${stage}`,
@@ -488,6 +494,12 @@ async function refreshMicrophoneDiagnostics(stage) {
     })
   ];
   renderMicDebug();
+}
+
+function refreshMicrophonePermissionLine() {
+  readMicrophonePermissionState().then((permissionState) => {
+    setMicDebugLine("Permission", `Permission: ${permissionState}`);
+  });
 }
 
 async function readMicrophonePermissionState() {

@@ -1,4 +1,4 @@
-export const APP_VERSION = "20260704-micdebug";
+export const APP_VERSION = "20260704-micgesture";
 
 export const MODES = Object.freeze({
   speechToText: Object.freeze({
