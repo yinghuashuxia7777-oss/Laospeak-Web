@@ -1,4 +1,4 @@
-export const APP_VERSION = "20260704-diagnostics";
+export const APP_VERSION = "20260704-micflow";
 
 export const MODES = Object.freeze({
   speechToText: Object.freeze({
@@ -137,6 +137,10 @@ export function buildMicrophoneErrorMessage(error) {
 
   if (errorName === "NotFoundError" || errorName === "DevicesNotFoundError") {
     return "No microphone was found. Check the iPhone microphone permission and try again.";
+  }
+
+  if (errorName === "TimeoutError") {
+    return "The microphone request timed out. Open the page in Safari, check microphone permission for this site, then try again. (TimeoutError)";
   }
 
   return `Could not start the microphone. Open this page in Safari over HTTPS and try again. Browser error: ${errorName || "UnknownError"}.`;
