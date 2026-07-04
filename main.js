@@ -2,12 +2,13 @@ import {
   MODES,
   buildStatusText,
   cleanText,
+  formatRecordingElapsed,
   resolveMode,
   resolveVoiceSubmission,
   selectCopyText,
   trimHistory,
   validateRuntimeConfig
-} from "./core.js?v=20260704-feedback";
+} from "./core.js?v=20260704-recorder";
 
 const MAX_RECORDING_SECONDS = 60;
 const HISTORY_DAYS = 3;
@@ -54,8 +55,9 @@ const state = {
   stream: null,
   chunks: [],
   startedAt: 0,
-  timer: null,
+  timerFrame: null,
   autoStopTimer: null,
+  canPackageAudio: false,
   currentResult: null,
   history: loadHistory()
 };
@@ -115,8 +117,8 @@ async function toggleRecording() {
 }
 
 async function startRecording() {
-  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-    fail("This browser cannot record audio. Please use Safari on iPhone with HTTPS.");
+  if (!navigator.mediaDevices?.getUserMedia) {
+    fail("This browser cannot open the microphone. Please use Safari on iPhone with HTTPS.");
     return;
   }
 
@@ -128,21 +130,15 @@ async function startRecording() {
     }
 
     state.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const mimeType = preferredAudioMimeType();
-    state.recorder = new MediaRecorder(state.stream, mimeType ? { mimeType } : undefined);
     state.chunks = [];
-    state.recorder.addEventListener("dataavailable", (event) => {
-      if (event.data.size > 0) {
-        state.chunks.push(event.data);
-      }
-    });
-    state.recorder.addEventListener("stop", submitRecordedAudio);
-    state.recorder.start();
-    state.startedAt = Date.now();
-    setWorkflow("recording");
-    state.timer = window.setInterval(updateTimer, 250);
+    state.canPackageAudio = false;
+
+    beginRecordingUI();
+    startMediaRecorderIfAvailable();
     state.autoStopTimer = window.setTimeout(stopRecording, MAX_RECORDING_SECONDS * 1000);
   } catch (error) {
+    stopRecordingUI();
+    stopTracks();
     fail(error?.name === "NotAllowedError"
       ? "Microphone permission was denied. Allow microphone access and try again."
       : "Could not start the microphone. Please try again.");
@@ -152,11 +148,12 @@ async function startRecording() {
 function stopRecording() {
   if (state.recorder && state.recorder.state !== "inactive") {
     state.recorder.stop();
+  } else {
+    submitRecordedAudio();
   }
   stopTracks();
-  window.clearInterval(state.timer);
+  stopRecordingUI();
   window.clearTimeout(state.autoStopTimer);
-  state.timer = null;
   state.autoStopTimer = null;
 }
 
@@ -165,7 +162,16 @@ async function submitRecordedAudio() {
   const audio = new Blob(state.chunks, { type: mimeType });
   state.chunks = [];
 
-  if (audio.size < 512) {
+  if (!state.canPackageAudio || audio.size < 512) {
+    const submission = resolveVoiceSubmission(loadConfig());
+    if (!submission.canUpload) {
+      elements.setupPanel.hidden = false;
+      setWorkflow("idle");
+      showError("");
+      showWarning("Microphone test finished. Add Worker settings before transcription can run.");
+      return;
+    }
+
     fail("No clear audio was recorded. Please try again closer to the microphone.");
     return;
   }
@@ -386,10 +392,54 @@ function showWarning(message) {
 }
 
 function updateTimer() {
-  const elapsed = Math.min(MAX_RECORDING_SECONDS, Math.floor((Date.now() - state.startedAt) / 1000));
-  const minutes = String(Math.floor(elapsed / 60)).padStart(2, "0");
-  const seconds = String(elapsed % 60).padStart(2, "0");
-  elements.timerText.textContent = `${minutes}:${seconds}`;
+  elements.timerText.textContent = formatRecordingElapsed(state.startedAt, Date.now(), MAX_RECORDING_SECONDS);
+}
+
+function beginRecordingUI() {
+  state.startedAt = Date.now();
+  setWorkflow("recording");
+  updateTimer();
+  tickRecordingTimer();
+}
+
+function tickRecordingTimer() {
+  if (state.workflow !== "recording") {
+    return;
+  }
+
+  updateTimer();
+  state.timerFrame = window.requestAnimationFrame(tickRecordingTimer);
+}
+
+function stopRecordingUI() {
+  if (state.timerFrame) {
+    window.cancelAnimationFrame(state.timerFrame);
+  }
+  state.timerFrame = null;
+}
+
+function startMediaRecorderIfAvailable() {
+  if (typeof MediaRecorder === "undefined") {
+    showWarning("Microphone is active. This iPhone browser cannot package audio until a compatible recorder is available.");
+    return;
+  }
+
+  try {
+    const mimeType = preferredAudioMimeType();
+    state.recorder = new MediaRecorder(state.stream, mimeType ? { mimeType } : undefined);
+    state.recorder.addEventListener("dataavailable", (event) => {
+      if (event.data.size > 0) {
+        state.chunks.push(event.data);
+      }
+    });
+    state.recorder.addEventListener("stop", submitRecordedAudio);
+    state.recorder.start();
+    state.canPackageAudio = true;
+  } catch {
+    state.recorder = null;
+    state.canPackageAudio = false;
+    showWarning("Microphone is active. Audio packaging failed on this browser, so this is recording-test mode for now.");
+  }
 }
 
 function stopTracks() {

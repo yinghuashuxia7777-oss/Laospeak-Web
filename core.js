@@ -118,6 +118,14 @@ export function resolveVoiceSubmission(config = {}) {
   };
 }
 
+export function formatRecordingElapsed(startedAt, now = Date.now(), maxSeconds = 60) {
+  const elapsedSeconds = Math.max(0, Math.floor((now - startedAt) / 1000));
+  const cappedSeconds = Math.min(maxSeconds, elapsedSeconds);
+  const minutes = String(Math.floor(cappedSeconds / 60)).padStart(2, "0");
+  const seconds = String(cappedSeconds % 60).padStart(2, "0");
+  return `${minutes}:${seconds}`;
+}
+
 export function cleanText(value) {
   return typeof value === "string" ? value.trim() : "";
 }

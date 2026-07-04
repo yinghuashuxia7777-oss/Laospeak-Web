@@ -1,10 +1,10 @@
-const CACHE_NAME = "miw-laospeak-pwa-v2-feedback";
+const CACHE_NAME = "miw-laospeak-pwa-v3-recorder";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=20260704-feedback",
-  "./main.js?v=20260704-feedback",
-  "./core.js?v=20260704-feedback",
+  "./styles.css?v=20260704-recorder",
+  "./main.js?v=20260704-recorder",
+  "./core.js?v=20260704-recorder",
   "./manifest.webmanifest",
   "./assets/icon.svg"
 ];
