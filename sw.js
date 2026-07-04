@@ -1,10 +1,10 @@
-const CACHE_NAME = "miw-laospeak-pwa-v6-micstatus";
+const CACHE_NAME = "miw-laospeak-pwa-v7-micdebug";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=20260704-micstatus",
-  "./main.js?v=20260704-micstatus",
-  "./core.js?v=20260704-micstatus",
+  "./styles.css?v=20260704-micdebug",
+  "./main.js?v=20260704-micdebug",
+  "./core.js?v=20260704-micdebug",
   "./manifest.webmanifest",
   "./assets/icon.svg"
 ];

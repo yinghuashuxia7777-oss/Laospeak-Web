@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest">
     <link rel="icon" href="./assets/icon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="./assets/icon.svg">
-    <link rel="stylesheet" href="./styles.css?v=20260704-micstatus">
+    <link rel="stylesheet" href="./styles.css?v=20260704-micdebug">
   </head>
   <body>
     <main class="app-shell">
@@ -78,6 +78,13 @@
       <section class="warning-bar" id="warningBar" hidden></section>
       <section class="error-bar" id="errorBar" hidden></section>
 
+      <section class="diagnostic-panel" id="diagnosticPanel" hidden>
+        <div class="section-heading">
+          <span>Mic Debug</span>
+        </div>
+        <pre id="micDebugText">Waiting for microphone test.</pre>
+      </section>
+
       <section class="results" aria-live="polite">
         <article class="result-card" id="transcriptCard" hidden>
           <span>Lao Transcript</span>
@@ -111,6 +118,6 @@
       </footer>
     </main>
 
-    <script type="module" src="./main.js?v=20260704-micstatus"></script>
+    <script type="module" src="./main.js?v=20260704-micdebug"></script>
   </body>
 </html>

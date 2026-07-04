@@ -5,16 +5,18 @@ import {
   buildRecordingStatusText,
   buildStatusText,
   cleanText,
+  formatMicrophoneDiagnosticLines,
   formatRecordingElapsed,
   resolveMode,
   resolveVoiceSubmission,
   selectCopyText,
   trimHistory,
   validateRuntimeConfig
-} from "./core.js?v=20260704-micstatus";
+} from "./core.js?v=20260704-micdebug";
 
 const MAX_RECORDING_SECONDS = 60;
 const MICROPHONE_OPEN_TIMEOUT_MS = 8000;
+const AUDIO_MIME_TYPES = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"];
 const HISTORY_DAYS = 3;
 const CONFIG_KEY = "laospeak.web.config.v1";
 const HISTORY_KEY = "laospeak.web.history.v1";
@@ -40,6 +42,8 @@ const elements = {
   translateTextButton: document.querySelector("#translateTextButton"),
   warningBar: document.querySelector("#warningBar"),
   errorBar: document.querySelector("#errorBar"),
+  diagnosticPanel: document.querySelector("#diagnosticPanel"),
+  micDebugText: document.querySelector("#micDebugText"),
   transcriptCard: document.querySelector("#transcriptCard"),
   translationCard: document.querySelector("#translationCard"),
   polishedCard: document.querySelector("#polishedCard"),
@@ -64,9 +68,11 @@ const state = {
   timerInterval: null,
   autoStopTimer: null,
   canPackageAudio: false,
+  chunkBytes: 0,
   recordingToken: 0,
   streamReady: false,
   currentResult: null,
+  micDebug: [],
   history: loadHistory()
 };
 
@@ -104,6 +110,7 @@ function init() {
   elements.clearHistoryButton.addEventListener("click", clearHistory);
 
   render();
+  refreshMicrophoneDiagnostics("Ready");
   registerServiceWorker();
 }
 
@@ -128,20 +135,24 @@ async function toggleRecording() {
 
 async function startRecording() {
   if (!navigator.mediaDevices?.getUserMedia) {
+    await refreshMicrophoneDiagnostics("Unsupported browser");
     fail("This browser cannot open the microphone. Please use Safari on iPhone with HTTPS.");
     return;
   }
 
+  await refreshMicrophoneDiagnostics("Start tapped");
   const token = state.recordingToken + 1;
   state.recordingToken = token;
   state.recorder = null;
   state.stream = null;
   state.streamReady = false;
   state.chunks = [];
+  state.chunkBytes = 0;
   state.canPackageAudio = false;
   beginMicrophoneOpeningUI();
   showError("");
   showWarning("Opening microphone...");
+  setMicDebugLine("Mic request", "Mic request: sent");
 
   try {
     const submission = resolveVoiceSubmission(loadConfig());
@@ -153,6 +164,8 @@ async function startRecording() {
 
     state.stream = stream;
     state.streamReady = true;
+    observeAudioTracks(stream);
+    setMicDebugLine("Stream", `Stream: connected (${stream.getAudioTracks().length} audio track${stream.getAudioTracks().length === 1 ? "" : "s"})`);
     beginActiveRecordingUI();
     showWarning(submission.canUpload
       ? "Microphone connected. Speak now."
@@ -165,6 +178,7 @@ async function startRecording() {
     }
     stopRecordingUI();
     stopTracks();
+    setMicDebugLine("Stream", `Stream: failed (${cleanText(error?.name) || "UnknownError"})`);
     fail(buildMicrophoneErrorMessage(error));
   }
 }
@@ -459,8 +473,67 @@ function showWarning(message) {
   elements.warningBar.textContent = message;
 }
 
+async function refreshMicrophoneDiagnostics(stage) {
+  const permissionState = await readMicrophonePermissionState();
+  state.micDebug = [
+    `Build: ${APP_VERSION}`,
+    `Stage: ${stage}`,
+    ...formatMicrophoneDiagnosticLines({
+      isSecureContext: window.isSecureContext,
+      hasMediaDevices: Boolean(navigator.mediaDevices),
+      hasGetUserMedia: Boolean(navigator.mediaDevices?.getUserMedia),
+      hasMediaRecorder: typeof MediaRecorder !== "undefined",
+      permissionState,
+      supportedMimeTypes: getSupportedAudioMimeTypes()
+    })
+  ];
+  renderMicDebug();
+}
+
+async function readMicrophonePermissionState() {
+  try {
+    if (!navigator.permissions?.query) {
+      return "unavailable";
+    }
+
+    const status = await Promise.race([
+      navigator.permissions.query({ name: "microphone" }),
+      new Promise((resolve) => {
+        window.setTimeout(() => resolve(null), 600);
+      })
+    ]);
+    return cleanText(status?.state) || "unknown";
+  } catch {
+    return "unavailable";
+  }
+}
+
+function setMicDebugLine(key, message) {
+  const prefix = `${key}:`;
+  const index = state.micDebug.findIndex((line) => line.startsWith(prefix));
+  if (index >= 0) {
+    state.micDebug[index] = message;
+  } else {
+    state.micDebug.push(message);
+  }
+  renderMicDebug();
+}
+
+function renderMicDebug() {
+  if (!elements.diagnosticPanel || !elements.micDebugText) {
+    return;
+  }
+
+  elements.diagnosticPanel.hidden = state.micDebug.length === 0;
+  elements.micDebugText.textContent = state.micDebug.join("\n");
+}
+
 function updateTimer() {
-  elements.timerText.textContent = formatRecordingElapsed(state.startedAt, Date.now(), MAX_RECORDING_SECONDS);
+  const elapsed = formatRecordingElapsed(state.startedAt, Date.now(), MAX_RECORDING_SECONDS);
+  elements.timerText.textContent = elapsed;
+  if (state.workflow === "recording" && state.streamReady) {
+    setMicDebugLine("Timer", `Timer: ${elapsed}`);
+  }
 }
 
 function beginMicrophoneOpeningUI() {
@@ -473,6 +546,7 @@ function beginActiveRecordingUI() {
   state.startedAt = Date.now();
   setWorkflow("recording");
   updateTimer();
+  setMicDebugLine("Timer", "Timer: started");
   state.timerInterval = window.setInterval(updateTimer, 250);
 }
 
@@ -486,6 +560,7 @@ function stopRecordingUI() {
 
 function startMediaRecorderIfAvailable() {
   if (typeof MediaRecorder === "undefined") {
+    setMicDebugLine("Recorder", "Recorder: unavailable");
     showWarning("Microphone is active. This iPhone browser cannot package audio until a compatible recorder is available.");
     return;
   }
@@ -493,19 +568,39 @@ function startMediaRecorderIfAvailable() {
   try {
     const mimeType = preferredAudioMimeType();
     state.recorder = new MediaRecorder(state.stream, mimeType ? { mimeType } : undefined);
+    setMicDebugLine("Recorder", `Recorder: created (${state.recorder.mimeType || mimeType || "browser default"})`);
     state.recorder.addEventListener("dataavailable", (event) => {
       if (event.data.size > 0) {
         state.chunks.push(event.data);
+        state.chunkBytes += event.data.size;
+        setMicDebugLine("Chunks", `Chunks: ${state.chunks.length}, bytes=${state.chunkBytes}`);
       }
     });
-    state.recorder.addEventListener("stop", submitRecordedAudio);
+    state.recorder.addEventListener("stop", () => {
+      setMicDebugLine("Recorder", `Recorder: stopped (${state.chunks.length} chunk${state.chunks.length === 1 ? "" : "s"})`);
+      submitRecordedAudio();
+    });
     state.recorder.start();
+    setMicDebugLine("Recorder", `Recorder: ${state.recorder.state}`);
     state.canPackageAudio = true;
-  } catch {
+  } catch (error) {
     state.recorder = null;
     state.canPackageAudio = false;
+    setMicDebugLine("Recorder", `Recorder: failed (${cleanText(error?.name) || "UnknownError"})`);
     showWarning("Microphone is active. Audio packaging failed on this browser, so this is recording-test mode for now.");
   }
+}
+
+function observeAudioTracks(stream) {
+  const tracks = stream.getAudioTracks();
+  tracks.forEach((track, index) => {
+    const key = `Track ${index + 1}`;
+    const describeTrack = () => `${key}: ${track.readyState}, enabled=${track.enabled}, muted=${track.muted}`;
+    setMicDebugLine(key, describeTrack());
+    track.addEventListener("ended", () => setMicDebugLine(key, `${key}: ended`));
+    track.addEventListener("mute", () => setMicDebugLine(key, `${key}: muted`));
+    track.addEventListener("unmute", () => setMicDebugLine(key, describeTrack()));
+  });
 }
 
 function stopTracks() {
@@ -536,8 +631,15 @@ function requestMicrophoneStream() {
 }
 
 function preferredAudioMimeType() {
-  const types = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"];
-  return types.find((type) => MediaRecorder.isTypeSupported(type)) ?? "";
+  return getSupportedAudioMimeTypes()[0] ?? "";
+}
+
+function getSupportedAudioMimeTypes() {
+  if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") {
+    return [];
+  }
+
+  return AUDIO_MIME_TYPES.filter((type) => MediaRecorder.isTypeSupported(type));
 }
 
 function fileExtensionForMimeType(mimeType) {

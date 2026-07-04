@@ -117,6 +117,7 @@ h1 {
 .status-card,
 .result-card,
 .history-panel,
+.diagnostic-panel,
 .text-stage {
   border: 1px solid var(--line);
   border-radius: 18px;
@@ -434,6 +435,27 @@ textarea:focus {
   border: 1px solid rgba(255, 103, 103, 0.26);
   color: #ffd1d1;
   background: rgba(255, 103, 103, 0.12);
+}
+
+.diagnostic-panel {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 12px;
+  border-color: rgba(85, 213, 204, 0.22);
+  background: rgba(12, 18, 33, 0.86);
+}
+
+.diagnostic-panel pre {
+  min-height: 92px;
+  max-height: 190px;
+  margin: 0;
+  overflow: auto;
+  color: rgba(255, 255, 255, 0.78);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
 }
 
 .results {

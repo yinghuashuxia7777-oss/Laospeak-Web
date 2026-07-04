@@ -1,4 +1,4 @@
-export const APP_VERSION = "20260704-micstatus";
+export const APP_VERSION = "20260704-micdebug";
 
 export const MODES = Object.freeze({
   speechToText: Object.freeze({
@@ -56,6 +56,22 @@ export function buildStatusText(state, mode) {
 
 export function buildRecordingStatusText(isStreamReady) {
   return isStreamReady ? STATE_LABELS.recording : "Opening microphone";
+}
+
+export function formatMicrophoneDiagnosticLines(diagnostics = {}) {
+  const permissionState = cleanText(diagnostics.permissionState) || "unavailable";
+  const supportedMimeTypes = Array.isArray(diagnostics.supportedMimeTypes)
+    ? diagnostics.supportedMimeTypes.filter((type) => cleanText(type))
+    : [];
+
+  return [
+    `Secure context: ${diagnostics.isSecureContext ? "yes" : "no"}`,
+    `mediaDevices: ${diagnostics.hasMediaDevices ? "available" : "unavailable"}`,
+    `getUserMedia: ${diagnostics.hasGetUserMedia ? "available" : "unavailable"}`,
+    `MediaRecorder: ${diagnostics.hasMediaRecorder ? "available" : "unavailable"}`,
+    `Permission: ${permissionState}`,
+    `Supported audio: ${supportedMimeTypes.length > 0 ? supportedMimeTypes.join(", ") : "none"}`
+  ];
 }
 
 export function selectCopyText(mode, result = {}) {
