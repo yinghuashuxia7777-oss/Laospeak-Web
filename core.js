@@ -1,4 +1,4 @@
-export const APP_VERSION = "20260704-micgesture";
+export const APP_VERSION = "20260710-sessionguard";
 
 export const MODES = Object.freeze({
   speechToText: Object.freeze({
@@ -21,6 +21,7 @@ export const MODES = Object.freeze({
 export const WORKFLOW_STATES = Object.freeze({
   idle: "idle",
   recording: "recording",
+  finalizing: "finalizing",
   transcribing: "transcribing",
   translating: "translating",
   completed: "completed",
@@ -30,6 +31,7 @@ export const WORKFLOW_STATES = Object.freeze({
 export const STATE_LABELS = Object.freeze({
   idle: "Ready",
   recording: "Listening",
+  finalizing: "Finishing recording",
   transcribing: "Understanding Lao speech",
   translating: "Translating",
   completed: "Completed",
@@ -58,6 +60,29 @@ export function buildRecordingStatusText(isStreamReady) {
   return isStreamReady ? STATE_LABELS.recording : "Opening microphone";
 }
 
+export function isWorkflowBusy(workflow) {
+  return [
+    WORKFLOW_STATES.recording,
+    WORKFLOW_STATES.finalizing,
+    WORKFLOW_STATES.transcribing,
+    WORKFLOW_STATES.translating
+  ].includes(workflow);
+}
+
+export function getWorkflowInteractionState(workflow, hasCopyText) {
+  const busy = isWorkflowBusy(workflow);
+
+  return {
+    busy,
+    canChangeMode: !busy,
+    canUseRecordButton: !busy || workflow === WORKFLOW_STATES.recording,
+    canTranslate: !busy,
+    canClear: !busy,
+    canCopy: !busy && Boolean(hasCopyText),
+    canOpenHistory: !busy
+  };
+}
+
 export function formatMicrophoneDiagnosticLines(diagnostics = {}) {
   const permissionState = cleanText(diagnostics.permissionState) || "unavailable";
   const supportedMimeTypes = Array.isArray(diagnostics.supportedMimeTypes)
@@ -72,6 +97,151 @@ export function formatMicrophoneDiagnosticLines(diagnostics = {}) {
     `Permission: ${permissionState}`,
     `Supported audio: ${supportedMimeTypes.length > 0 ? supportedMimeTypes.join(", ") : "none"}`
   ];
+}
+
+export function formatClientDiagnosticLines(diagnostics = {}) {
+  const displayMode = cleanText(diagnostics.displayMode) || "unknown";
+  const visibilityState = cleanText(diagnostics.visibilityState) || "unknown";
+  let standalone = "unknown";
+
+  if (diagnostics.isStandalone === true) {
+    standalone = "yes";
+  } else if (diagnostics.isStandalone === false) {
+    standalone = "no";
+  }
+
+  return [
+    `Browser shell: ${displayMode}`,
+    `Standalone PWA: ${standalone}`,
+    `Visibility: ${visibilityState}`
+  ];
+}
+
+export function buildMicrophoneOpeningDiagnostic(elapsedMs, timeoutMs = 8000) {
+  const elapsedSeconds = Math.max(0, Math.floor(Number(elapsedMs) / 1000));
+  const timeoutSeconds = Math.max(1, Math.ceil(Number(timeoutMs) / 1000));
+  return `Open wait: ${elapsedSeconds}s/${timeoutSeconds}s`;
+}
+
+export function buildTaskTimeoutErrorMessage(timeoutMs = 30000) {
+  const timeoutSeconds = Math.max(1, Math.ceil(Number(timeoutMs) / 1000));
+  return `Background task did not finish within ${timeoutSeconds}s. Input has been unlocked; please try again.`;
+}
+
+export function runWithTimeout(operation, timeoutMs = 30000, onTimeout) {
+  const safeTimeoutMs = Math.max(0, Number(timeoutMs) || 0);
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      try {
+        onTimeout?.();
+      } catch {
+        // The timeout path must still unlock the UI even if cleanup throws.
+      }
+      reject(new Error(buildTaskTimeoutErrorMessage(safeTimeoutMs)));
+    }, safeTimeoutMs);
+
+    const finish = (complete, value) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timer);
+      complete(value);
+    };
+
+    Promise.resolve()
+      .then(operation)
+      .then(
+        (value) => finish(resolve, value),
+        (error) => finish(reject, error)
+      );
+  });
+}
+
+export function raceWithTimeout(request, timeoutMs, createTimeoutError, timers = globalThis) {
+  const safeTimeoutMs = Math.max(0, Number(timeoutMs) || 0);
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = timers.setTimeout(() => {
+      reject(createTimeoutError());
+    }, safeTimeoutMs);
+  });
+
+  return Promise.race([request, timeout]).finally(() => {
+    timers.clearTimeout(timer);
+  });
+}
+
+export function requestJSONWithTimeout(request, timeoutMs = 30000, onTimeout) {
+  return runWithTimeout(async () => {
+    const response = await request();
+    const data = await response.json().catch(() => ({}));
+    return { response, data };
+  }, timeoutMs, onTimeout);
+}
+
+export async function stopMediaRecorderWithTimeout(recorder, timeoutMs = 2000) {
+  let handleStop;
+  let handleError;
+
+  try {
+    await runWithTimeout(() => new Promise((resolve, reject) => {
+      handleStop = () => resolve();
+      handleError = (event) => reject(event?.error ?? new Error("Audio recorder failed while stopping."));
+      recorder.addEventListener("stop", handleStop, { once: true });
+      recorder.addEventListener("error", handleError, { once: true });
+      recorder.stop();
+    }), timeoutMs);
+  } finally {
+    if (handleStop) {
+      recorder.removeEventListener("stop", handleStop);
+    }
+    if (handleError) {
+      recorder.removeEventListener("error", handleError);
+    }
+  }
+}
+
+export function createRecorderSession(recorder, onChunk) {
+  const chunks = [];
+  let chunkBytes = 0;
+  let closed = false;
+
+  function handleDataAvailable(event) {
+    const chunk = event?.data;
+    if (closed || !chunk || chunk.size <= 0) {
+      return;
+    }
+
+    chunks.push(chunk);
+    chunkBytes += chunk.size;
+    onChunk?.({ chunkCount: chunks.length, chunkBytes });
+  }
+
+  function snapshot() {
+    return { chunks: [...chunks], chunkBytes };
+  }
+
+  recorder.addEventListener("dataavailable", handleDataAvailable);
+
+  return {
+    snapshot,
+    close() {
+      if (!closed) {
+        closed = true;
+        recorder.removeEventListener("dataavailable", handleDataAvailable);
+      }
+      return snapshot();
+    }
+  };
 }
 
 export function selectCopyText(mode, result = {}) {
@@ -152,7 +322,7 @@ export function buildMicrophoneErrorMessage(error) {
   const errorName = cleanText(error?.name);
 
   if (errorName === "NotAllowedError" || errorName === "PermissionDeniedError") {
-    return "Microphone permission was denied. Open this page in Safari, allow microphone access, and try again. (NotAllowedError)";
+    return "Microphone permission was denied. Open this page in Safari, set Microphone to Allow or Ask in Website Settings, and try again. (NotAllowedError)";
   }
 
   if (errorName === "NotFoundError" || errorName === "DevicesNotFoundError") {
@@ -160,7 +330,7 @@ export function buildMicrophoneErrorMessage(error) {
   }
 
   if (errorName === "TimeoutError") {
-    return "The microphone request timed out. Open the page in Safari, check microphone permission for this site, then try again. (TimeoutError)";
+    return "The microphone request timed out before Safari returned an audio stream. Open this page in Safari, check this site's Microphone setting, then try Safari before Home Screen. (TimeoutError)";
   }
 
   return `Could not start the microphone. Open this page in Safari over HTTPS and try again. Browser error: ${errorName || "UnknownError"}.`;

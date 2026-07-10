@@ -2,20 +2,30 @@ import {
   APP_VERSION,
   MODES,
   buildMicrophoneErrorMessage,
+  buildMicrophoneOpeningDiagnostic,
   buildRecordingStatusText,
   buildStatusText,
   cleanText,
+  createRecorderSession,
+  formatClientDiagnosticLines,
   formatMicrophoneDiagnosticLines,
   formatRecordingElapsed,
+  getWorkflowInteractionState,
+  isWorkflowBusy,
+  raceWithTimeout,
+  requestJSONWithTimeout,
   resolveMode,
   resolveVoiceSubmission,
   selectCopyText,
+  stopMediaRecorderWithTimeout,
   trimHistory,
   validateRuntimeConfig
-} from "./core.js?v=20260704-micgesture";
+} from "./core.js?v=20260710-sessionguard";
 
 const MAX_RECORDING_SECONDS = 60;
 const MICROPHONE_OPEN_TIMEOUT_MS = 8000;
+const RECORDER_STOP_TIMEOUT_MS = 2000;
+const WORKER_REQUEST_TIMEOUT_MS = 30000;
 const AUDIO_MIME_TYPES = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"];
 const HISTORY_DAYS = 3;
 const CONFIG_KEY = "laospeak.web.config.v1";
@@ -62,13 +72,14 @@ const state = {
   mode: MODES.laoToChinese.id,
   workflow: "idle",
   recorder: null,
+  recorderSession: null,
   stream: null,
-  chunks: [],
   startedAt: 0,
   timerInterval: null,
+  openingInterval: null,
+  openStartedAt: 0,
   autoStopTimer: null,
   canPackageAudio: false,
-  chunkBytes: 0,
   recordingToken: 0,
   streamReady: false,
   currentResult: null,
@@ -115,7 +126,7 @@ function init() {
 }
 
 function setMode(mode) {
-  if (state.workflow === "recording") {
+  if (isWorkflowBusy(state.workflow)) {
     return;
   }
 
@@ -127,6 +138,10 @@ function setMode(mode) {
 async function toggleRecording() {
   if (state.workflow === "recording") {
     stopRecording();
+    return;
+  }
+
+  if (isWorkflowBusy(state.workflow)) {
     return;
   }
 
@@ -142,11 +157,11 @@ async function startRecording() {
 
   const token = state.recordingToken + 1;
   state.recordingToken = token;
+  state.recorderSession?.close();
   state.recorder = null;
+  state.recorderSession = null;
   state.stream = null;
   state.streamReady = false;
-  state.chunks = [];
-  state.chunkBytes = 0;
   state.canPackageAudio = false;
   beginMicrophoneOpeningUI();
   showError("");
@@ -226,9 +241,12 @@ function stopRecording() {
   }
 
   if (state.recorder && state.recorder.state !== "inactive") {
-    state.recorder.stop();
+    setWorkflow("finalizing");
+    finalizeRecorderAndSubmit(state.recorder, state.recorderSession);
   } else {
-    submitRecordedAudio();
+    const recording = closeRecorderSession(state.recorderSession);
+    state.recorder = null;
+    submitRecordedAudio(recording);
   }
   stopTracks();
   stopRecordingUI();
@@ -236,10 +254,34 @@ function stopRecording() {
   state.autoStopTimer = null;
 }
 
-async function submitRecordedAudio() {
-  const mimeType = state.chunks[0]?.type || "audio/webm";
-  const audio = new Blob(state.chunks, { type: mimeType });
-  state.chunks = [];
+async function finalizeRecorderAndSubmit(recorder, recorderSession) {
+  let stoppedNormally = false;
+  try {
+    await stopMediaRecorderWithTimeout(recorder, RECORDER_STOP_TIMEOUT_MS);
+    stoppedNormally = true;
+  } catch (error) {
+    setMicDebugLine("Recorder", `Recorder: stop fallback (${cleanText(error?.name) || "TimeoutError"})`);
+  }
+
+  const recording = closeRecorderSession(recorderSession);
+  if (stoppedNormally) {
+    setMicDebugLine("Recorder", `Recorder: stopped (${recording.chunks.length} chunk${recording.chunks.length === 1 ? "" : "s"})`);
+  }
+  state.recorder = null;
+  await submitRecordedAudio(recording);
+}
+
+function closeRecorderSession(recorderSession) {
+  const recording = recorderSession?.close() ?? { chunks: [], chunkBytes: 0 };
+  if (state.recorderSession === recorderSession) {
+    state.recorderSession = null;
+  }
+  return recording;
+}
+
+async function submitRecordedAudio(recording) {
+  const mimeType = recording.chunks[0]?.type || "audio/webm";
+  const audio = new Blob(recording.chunks, { type: mimeType });
 
   if (!state.canPackageAudio || audio.size < 512) {
     const submission = resolveVoiceSubmission(loadConfig());
@@ -314,14 +356,19 @@ async function translateChineseText() {
 }
 
 async function requestWorker(config, path, options) {
-  const response = await fetch(`${config.workerUrl}${path}`, {
-    ...options,
-    headers: {
-      ...(options.headers ?? {}),
-      "x-laospeak-code": config.accessCode
-    }
-  });
-  const data = await response.json().catch(() => ({}));
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const { response, data } = await requestJSONWithTimeout(
+    () => fetch(`${config.workerUrl}${path}`, {
+      ...options,
+      signal: controller?.signal,
+      headers: {
+        ...(options.headers ?? {}),
+        "x-laospeak-code": config.accessCode
+      }
+    }),
+    WORKER_REQUEST_TIMEOUT_MS,
+    () => controller?.abort()
+  );
 
   if (!response.ok || data.ok === false) {
     throw new Error(data.error || "The translation service returned an error.");
@@ -355,6 +402,10 @@ function buildWarning(result) {
 }
 
 function copyCurrentResult() {
+  if (isWorkflowBusy(state.workflow)) {
+    return;
+  }
+
   const text = selectCopyText(state.mode, state.currentResult);
   if (!text) {
     fail("There is no result to copy yet.");
@@ -368,7 +419,7 @@ function copyCurrentResult() {
         elements.copyButton.textContent = "Copy Result";
       }, 1200);
     })
-    .catch(() => fail("Copy failed. Please select the text and copy manually."));
+    .catch(() => showError("Copy failed. Please select the text and copy manually."));
 }
 
 function clearCurrentResult() {
@@ -404,7 +455,7 @@ function render() {
     : buildStatusText(state.workflow, mode.id);
   elements.recordButtonText.textContent = state.workflow === "recording"
     ? (state.streamReady ? "Stop Recording" : "Cancel")
-    : "Start Recording";
+    : (state.workflow === "finalizing" ? "Finishing..." : "Start Recording");
   elements.voiceStage.hidden = mode.id === MODES.chineseToLao.id;
   elements.textStage.hidden = mode.id !== MODES.chineseToLao.id;
   elements.shell.classList.toggle("is-recording", state.workflow === "recording");
@@ -413,9 +464,15 @@ function render() {
     button.classList.toggle("is-active", button.dataset.mode === mode.id);
   });
 
-  const busy = ["recording", "transcribing", "translating"].includes(state.workflow);
-  elements.copyButton.disabled = !selectCopyText(state.mode, state.currentResult);
-  elements.translateTextButton.disabled = busy;
+  const copyText = selectCopyText(state.mode, state.currentResult);
+  const interaction = getWorkflowInteractionState(state.workflow, Boolean(copyText));
+  elements.modeButtons.forEach((button) => {
+    button.disabled = !interaction.canChangeMode;
+  });
+  elements.recordButton.disabled = !interaction.canUseRecordButton;
+  elements.copyButton.disabled = !interaction.canCopy;
+  elements.translateTextButton.disabled = !interaction.canTranslate;
+  elements.clearButton.disabled = !interaction.canClear;
 
   renderResults();
   renderHistory();
@@ -450,11 +507,16 @@ function renderHistory() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "history-item";
+    button.disabled = isWorkflowBusy(state.workflow);
     const mode = resolveMode(record.mode);
     const preview = selectCopyText(record.mode, record) || record.transcript || "Saved result";
     button.innerHTML = `<strong>${mode.title}</strong><span></span>`;
     button.querySelector("span").textContent = preview;
     button.addEventListener("click", () => {
+      if (isWorkflowBusy(state.workflow)) {
+        return;
+      }
+
       state.mode = record.mode;
       state.currentResult = record;
       setWorkflow("completed");
@@ -484,6 +546,11 @@ function setBaseMicrophoneDiagnostics(stage, permissionState) {
   state.micDebug = [
     `Build: ${APP_VERSION}`,
     `Stage: ${stage}`,
+    ...formatClientDiagnosticLines({
+      displayMode: getDisplayMode(),
+      isStandalone: isStandaloneWebApp(),
+      visibilityState: document.visibilityState
+    }),
     ...formatMicrophoneDiagnosticLines({
       isSecureContext: window.isSecureContext,
       hasMediaDevices: Boolean(navigator.mediaDevices),
@@ -548,13 +615,33 @@ function updateTimer() {
   }
 }
 
+function updateOpeningWait() {
+  if (!state.openStartedAt) {
+    return;
+  }
+
+  const elapsedMs = Date.now() - state.openStartedAt;
+  elements.timerText.textContent = formatRecordingElapsed(
+    state.openStartedAt,
+    Date.now(),
+    Math.ceil(MICROPHONE_OPEN_TIMEOUT_MS / 1000)
+  );
+  if (state.workflow === "recording" && !state.streamReady) {
+    setMicDebugLine("Open wait", buildMicrophoneOpeningDiagnostic(elapsedMs, MICROPHONE_OPEN_TIMEOUT_MS));
+  }
+}
+
 function beginMicrophoneOpeningUI() {
   state.startedAt = 0;
+  state.openStartedAt = Date.now();
   setWorkflow("recording");
   elements.timerText.textContent = "00:00";
+  updateOpeningWait();
+  state.openingInterval = window.setInterval(updateOpeningWait, 250);
 }
 
 function beginActiveRecordingUI() {
+  stopOpeningTimer();
   state.startedAt = Date.now();
   setWorkflow("recording");
   updateTimer();
@@ -563,11 +650,20 @@ function beginActiveRecordingUI() {
 }
 
 function stopRecordingUI() {
+  stopOpeningTimer();
   if (state.timerInterval) {
     window.clearInterval(state.timerInterval);
   }
   state.timerInterval = null;
   state.startedAt = 0;
+}
+
+function stopOpeningTimer() {
+  if (state.openingInterval) {
+    window.clearInterval(state.openingInterval);
+  }
+  state.openingInterval = null;
+  state.openStartedAt = 0;
 }
 
 function startMediaRecorderIfAvailable() {
@@ -577,26 +673,22 @@ function startMediaRecorderIfAvailable() {
     return;
   }
 
+  let recorderSession;
   try {
     const mimeType = preferredAudioMimeType();
     state.recorder = new MediaRecorder(state.stream, mimeType ? { mimeType } : undefined);
     setMicDebugLine("Recorder", `Recorder: created (${state.recorder.mimeType || mimeType || "browser default"})`);
-    state.recorder.addEventListener("dataavailable", (event) => {
-      if (event.data.size > 0) {
-        state.chunks.push(event.data);
-        state.chunkBytes += event.data.size;
-        setMicDebugLine("Chunks", `Chunks: ${state.chunks.length}, bytes=${state.chunkBytes}`);
-      }
+    recorderSession = createRecorderSession(state.recorder, ({ chunkCount, chunkBytes }) => {
+      setMicDebugLine("Chunks", `Chunks: ${chunkCount}, bytes=${chunkBytes}`);
     });
-    state.recorder.addEventListener("stop", () => {
-      setMicDebugLine("Recorder", `Recorder: stopped (${state.chunks.length} chunk${state.chunks.length === 1 ? "" : "s"})`);
-      submitRecordedAudio();
-    });
+    state.recorderSession = recorderSession;
     state.recorder.start();
     setMicDebugLine("Recorder", `Recorder: ${state.recorder.state}`);
     state.canPackageAudio = true;
   } catch (error) {
+    recorderSession?.close();
     state.recorder = null;
+    state.recorderSession = null;
     state.canPackageAudio = false;
     setMicDebugLine("Recorder", `Recorder: failed (${cleanText(error?.name) || "UnknownError"})`);
     showWarning("Microphone is active. Audio packaging failed on this browser, so this is recording-test mode for now.");
@@ -625,13 +717,17 @@ function stopStream(stream) {
   stream?.getTracks().forEach((track) => track.stop());
 }
 
+function getDisplayMode() {
+  const modes = ["fullscreen", "standalone", "minimal-ui", "browser"];
+  return modes.find((mode) => window.matchMedia?.(`(display-mode: ${mode})`).matches) ?? "unknown";
+}
+
+function isStandaloneWebApp() {
+  return Boolean(window.navigator.standalone) || getDisplayMode() === "standalone";
+}
+
 function requestMicrophoneStream() {
   const request = navigator.mediaDevices.getUserMedia({ audio: true });
-  const timeout = new Promise((_, reject) => {
-    window.setTimeout(() => {
-      reject(Object.assign(new Error("Microphone request timed out."), { name: "TimeoutError" }));
-    }, MICROPHONE_OPEN_TIMEOUT_MS);
-  });
 
   request.then((stream) => {
     if (state.workflow !== "recording") {
@@ -639,7 +735,11 @@ function requestMicrophoneStream() {
     }
   }).catch(() => {});
 
-  return Promise.race([request, timeout]);
+  return raceWithTimeout(
+    request,
+    MICROPHONE_OPEN_TIMEOUT_MS,
+    () => Object.assign(new Error("Microphone request timed out."), { name: "TimeoutError" })
+  );
 }
 
 function preferredAudioMimeType() {
